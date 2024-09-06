@@ -36,11 +36,14 @@ class Lesson():
             self.teacher_selected = True
             self.teacher_info = self._get_teacher_info(data['teacher_ids'][0])
             self.teacher_tg = db.get_teacher_by_crm_id(self.teacher_info.get('id', None))[2]
+            self.teacher_fio = self.teacher_info['name']
+
             #print(self.teacher_tg)
             if not self.teacher_tg:
                 self.errors.append(f"Педагог не зарегистрирован в боте")
-        
-        self.teacher_tg = config.vlad # Убрать после теста 
+        #Тестирование бота
+        if config.test_mode:
+            self.teacher_tg = config.vlad # Убрать после теста 
 
         self.time_from = dt.datetime.strptime(data['time_from'], '%Y-%m-%d %H:%M:%S')
         self.time_to = dt.datetime.strptime(data['time_to'], '%Y-%m-%d %H:%M:%S')
@@ -176,7 +179,6 @@ class Lesson():
         '''
         return message text for (head, coordinator)
         '''
-        fio = self.teacher_info['name']
         if self.location != config.transcript['schools']:
             if self.theme == 'IT':
                 message_text = (
@@ -214,17 +216,16 @@ class Lesson():
         '''
         return fail message text for (head, coordinator)
         '''
-        fio = self.teacher_info['name']
         if self.location != config.transcript['schools']:
             if self.theme == 'IT':
                 message_text = (
-                    f"Преподаватель {fio} не подтвердил свое участие на занятии ❌❌❌, "
+                    f"Преподаватель {self.teacher_fio} не подтвердил свое участие на занятии ❌❌❌, "
                     f"возможно, он пропустил сообщение, либо не может провести занятие в данное время ⁉️⁉️⁉️"
                 )
                 return message_text, message_text
             else:
                 message_text = (
-                    f"🆘Педагог {fio}, не отвечает на подтверждение {self.subject}\n"
+                    f"🆘Педагог {self.teacher_fio}, не отвечает на подтверждение {self.subject}\n"
                     f"{self.location} {self.classroom}, время {self.time}"
                 )
                 return message_text, message_text
@@ -235,13 +236,13 @@ class Lesson():
 
             if self.theme == 'IT':
                 message_text = (
-                    f"Преподаватель {fio} не подтвердил свое участие на занятии ❌❌❌, "
+                    f"Преподаватель {self.teacher_fio} не подтвердил свое участие на занятии ❌❌❌, "
                     f"возможно, он пропустил сообщение, либо не может провести занятие в данное время ⁉️⁉️⁉️"
                 )
                 return message_text, message_text
             else:
                 message_text = (
-                    f"🆘Педагог {fio}, не отвечает на подтверждение {self.subject}\n"
+                    f"🆘Педагог {self.teacher_fio}, не отвечает на подтверждение {self.subject}\n"
                     f"Адрес: {loc_info}, Аудитория: {self.classroom}, время {self.time}"
                 )
                 return message_text, message_text
@@ -250,14 +251,13 @@ class Lesson():
         '''
         Преподаватель подтвердил за 5 минут до занятия
         '''
-        fio = self.teacher_info['name']
         if self.location == config.transcript['schools']:
             address = self.address
             link = f"[{address}](https://yandex.ru/maps/?text={address.replace(' ', '%20')})"
             loc_info = f'{self.location}, {link}'
             if self.theme == 'IT':
                 message_text = (
-                    f"Преподаватель {fio} на месте.\n"
+                    f"Преподаватель {self.teacher_fio} на месте.\n"
                     f"Название группы: {self.group_name}\n"
                     f"Адрес: {loc_info}\n"
                     f"Время: {self.time}"
@@ -266,7 +266,7 @@ class Lesson():
             else:
                 message_text = (
                     f"Преподаватель на месте.\n"
-                    f"ФИО: {fio}\n"
+                    f"ФИО: {self.teacher_fio}\n"
                     f"Группа: {self.group_name}\n"
                     f"Предмет: {self.subject}\n"
                     f"Адрес: {loc_info}\n"
@@ -276,7 +276,7 @@ class Lesson():
         else:
             if self.theme == 'IT':
                 message_text = (
-                    f"Преподаватель {fio} на месте.\n"
+                    f"Преподаватель {self.teacher_fio} на месте.\n"
                     f"Группа: {self.group_name}\n"
                     f"Время: {self.time}\n"
                     f"Аудитория: {self.classroom}\n"
@@ -286,7 +286,7 @@ class Lesson():
             else:
                 message_text = (
                     f"Преподаватель на месте.\n"
-                    f"ФИО: {fio}\n"
+                    f"ФИО: {self.teacher_fio}\n"
                     f"Предмет: {self.subject}\n"
                     f"Место: {self.location}\n"
                     f"Аудитория: {self.classroom}\n"
@@ -299,7 +299,6 @@ class Lesson():
         '''
         Преподаватель не на месте
         '''
-        fio = self.teacher_info['name']
         if self.location == config.transcript['schools']:
             address = self.address
             link = f"[{address}](https://yandex.ru/maps/?text={address.replace(' ', '%20')})"
@@ -307,14 +306,14 @@ class Lesson():
 
             if self.theme == 'IT':
                 message_text = (
-                    f"Преподаватель {fio} не на месте. 🆘🆘🆘\n"
+                    f"Преподаватель {self.teacher_fio} не на месте. 🆘🆘🆘\n"
                     f"Необходимо срочно связаться с администратором и преподавателем ‼️"
                 )
                 return message_text, message_text           
             else:
                 message_text = (
                     f"🆘\n"
-                    f"Педагога {fio}, нет на месте.\n"
+                    f"Педагога {self.teacher_fio}, нет на месте.\n"
                     f"Предмет: {self.subject}\n"
                     f"Адрес: {loc_info}, Аудитория: {self.classroom}, время {self.time}\n"
                     f"Необходимо срочно связаться с администратором и преподавателем ❗️❗️❗️"
@@ -323,14 +322,14 @@ class Lesson():
         else:
             if self.theme == 'IT':
                 message_text = (
-                    f"Преподаватель {fio} не на месте. 🆘🆘🆘\n"
+                    f"Преподаватель {self.teacher_fio} не на месте. 🆘🆘🆘\n"
                     f"Необходимо срочно связаться с администратором и преподавателем ‼️"
                 )
                 return message_text, message_text
             else:
                 message_text = (
                     f"🆘\n"
-                    f"Педагога {fio}, нет на месте.\n"
+                    f"Педагога {self.fio}, нет на месте.\n"
                     f"Предмет: {self.subject}\n"
                     f"Место: {self.location}, Аудитория: {self.classroom}, время {self.time}\n"
                     f"Необходимо срочно связаться с администратором и преподавателем ❗️❗️❗️"

@@ -1,5 +1,4 @@
 import json
-import joblib
 import requests
 import datetime as dt
 from typing import List

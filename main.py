@@ -3,6 +3,7 @@ from config import tg_ids
 from lesson import Lesson
 from crm import crm
 import datetime as dt
+import logging
 
 from typing import Dict
 
@@ -13,7 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.dispatcher.router import Router
-
+from apscheduler.triggers.cron import CronTrigger
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import F
@@ -21,6 +22,10 @@ from commands import router as commands_router
 
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.getLogger('apscheduler').setLevel(logging.WARNING)
+logging.getLogger('aiogram').setLevel(logging.WARNING)
 
 class Form(StatesGroup):
     waiting_for_message = State()
@@ -99,10 +104,11 @@ async def schedule_fail_notifications(key: int):
     if lesson:
         # Время для отправки fail-сообщений
         reminder_fail_time = dt.datetime.combine(dt.datetime.now().date() + dt.timedelta(days=1), dt.time(9, 0))
-        #reminder_fail_time = dt.datetime.now() + dt.timedelta(seconds=5)# test time
 
         presence_fail_time = lesson.time_from - dt.timedelta(minutes=15)# за 15 минут до начала занятия
-        #presence_fail_time = dt.datetime.now() + dt.timedelta(seconds=5)# test time
+        if config.test_mode:
+            reminder_fail_time = dt.datetime.now() + dt.timedelta(seconds=5)# test time
+            presence_fail_time = dt.datetime.now() + dt.timedelta(seconds=5)# test time
 
         # Планируем fail-сообщение для reminder
         reminder_fail_text_head, reminder_fail_text_coordinator = lesson.get_reminder_text_fail()
@@ -173,7 +179,7 @@ async def daily_fetch():
 
     for type in config.transcript.keys():
         for l in data[type]:
-            if not l['teacher_ids'] == [650]:
+            if config.test_mode and not l['teacher_ids'] == [650]:
                 continue
             present_time = dt.datetime.now() + dt.timedelta(seconds=1)
 
@@ -195,10 +201,8 @@ async def daily_fetch():
             button = InlineKeyboardButton(text=config.button_reminder_check, callback_data=f'reminder_check_{key}')
             inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[[button]]) 
             message_text = lesson.get_message_reminder()
-            reminder_time = 0
             scheduler.add_job(send_scheduled_message, 'date', run_date=present_time,
                               args=(message_text, lesson.teacher_tg, inline_keyboard, "Markdown"), misfire_grace_time=30)
-            
             
             
             # 2 Сообщение за 5 мин до занятия, на месте ли преподаватель
@@ -206,6 +210,8 @@ async def daily_fetch():
             presence_keyboard = InlineKeyboardMarkup(inline_keyboard=[[presence_button]])
             
             presence_time = lesson.time_from - dt.timedelta(minutes=20)#За 20 минут до занятия
+            if config.test_mode:
+                presence_time = present_time
 
             scheduler.add_job(send_scheduled_message, 'date', run_date=presence_time,
                               args=(config.presence_message_text, lesson.teacher_tg, presence_keyboard, "Markdown"), misfire_grace_time=30)
@@ -218,8 +224,9 @@ async def send_scheduled_message(message, user_id, inline_keyboard=None, parse_m
     try:
         await bot.send_message(chat_id=user_id, text=message, reply_markup=inline_keyboard, parse_mode=parse_mode)
         #print(f"Сообщение отправлено пользователю {user_id}")  
+        logging.info(f"Сообщение отправлено пользователю {user_id}")
     except Exception as e:
-        print(f"Ошибка при отправке сообщения: {e}")
+        logging.error(f"Сообщение пользователю {user_id} не отправлено. Ошибка: {e}")
 
 async def process_reminder_callback(callback_query: types.CallbackQuery):
     key = int(callback_query.data.replace('reminder_check_', ''))
@@ -243,6 +250,9 @@ async def process_reminder_callback(callback_query: types.CallbackQuery):
         await bot.send_message(chat_id=lesson.coordinator_tg, text=message_coor, parse_mode='Markdown')
         if lesson.manager_tg:
             await bot.send_message(chat_id=lesson.manager_tg, text=message_coor, parse_mode='Markdown')
+        
+        logging.info(f"Напоминание подтверждено для {lesson.teacher_fio} на {lesson.time} для группы {lesson.group_name}")
+
     else:
         await bot.send_message(chat_id=callback_query.from_user.id, text="Ошибка: информация о занятии не найдена.")
 
@@ -274,6 +284,7 @@ async def process_presence_callback(callback_query: types.CallbackQuery, state =
         else:
             await bot.send_message(chat_id=callback_query.from_user.id, text=config.lesson_theme_request_text)
             await state.set_state(Form.waiting_for_message)
+        logging.info(f"Присутсвие подтверждено для {lesson.teacher_fio} на {lesson.time} для группы {lesson.group_name}")
             # Продолжить процесс
             #await process_lesson_confirmation(callback_query, state)
 
@@ -403,6 +414,8 @@ async def process_attendance_callback(callback_query: types.CallbackQuery):
             await bot.send_message(chat_id=lesson_data[key].manager_tg, text=message_coor, parse_mode='Markdown')
         
         await send_message_feedback(key)
+
+        logging.info(f"Посещаемость отправлена от {lesson_data[key].teacher_fio} на {lesson_data[key].time} для группы {lesson_data[key].group_name}")
         return None
     keyboard = get_inline_students(key)
     await callback_query.message.edit_reply_markup(reply_markup=keyboard)
@@ -461,8 +474,10 @@ async def on_startup(dp: Dispatcher):
     # Пример тестовой задачи
     #await send_scheduled_message("Тестовое сообщение для проверки вручную", config.vlad)
     #
-    #scheduler.add_job(daily_fetch, CronTrigger(hour=21, minute=0))
-    #await daily_fetch()
+    if config.test_mode:
+        await daily_fetch()
+    else:
+        scheduler.add_job(daily_fetch, CronTrigger(hour=21, minute=0))
     #scheduler.add_job(daily_fetch, 'cron', hour=0, minute=0)
 
 async def main():

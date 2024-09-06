@@ -1,7 +1,10 @@
+test_mode = True
+do_geo_request = True
+
 vlad = '289988172'
 test_token = "6402177202:AAHVauhCoi7zgnnntjYr2QVP2pfWptKBSsg"
 bot_token_old = '5798234250:AAFjVCvv-INz601SOxy0yLE9jxKGDgCBiXY'
-bot_token = '7381557017:AAG8l8Xbzv1NJaHP3HFAQjQHuTdr092YOUM'
+bot_token = '7381557017:AAG8l8Xbzv1NJaHP3HFAQjQHuTdr092YOUM' #актуальный
 #bot_token = test_token
 #crm
 CRM_CREDENTIALS = {
@@ -12,7 +15,6 @@ CRM_CREDENTIALS = {
 # geo
 GEO_TOKEN = "pk.d646a5dcaa35b724d0b297d5ce4c10e6"
 geo_max_distance = 100 # В метрах
-do_geo_request = True
 
 
 class tg_ids:
