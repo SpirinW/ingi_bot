@@ -14,7 +14,7 @@ class Teachers_database:
                 tg_id INTEGER UNIQUE,
                 phone TEXT
             )
-        ''')
+        ''') 
         self.conn.commit()
 
     def add_teacher(self, name: str, crm_id: int, tg_id: int, phone: str):
@@ -51,6 +51,12 @@ class Teachers_database:
         self.cursor.execute('select * from teachers')
         return self.cursor.fetchall()
 
+    def delete_teacher_by_crm_id(self, crm_id: int):
+        self.cursor.execute('''
+            DELETE FROM teachers WHERE crm_id = ?
+        ''', (crm_id,))
+        self.conn.commit()
+    
     def close(self):
         self.conn.close()
 

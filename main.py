@@ -1,7 +1,8 @@
 import config
 from config import tg_ids
+from config import lesson_delay, responce_threshold
 from lesson import Lesson
-from crm import crm
+from crm import CRM
 import datetime as dt
 import logging
 
@@ -22,6 +23,7 @@ from commands import router as commands_router
 
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
+from geopy.exc import GeocoderTimedOut
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.getLogger('apscheduler').setLevel(logging.WARNING)
@@ -35,7 +37,7 @@ class Form(StatesGroup):
 # Инициализация бота и диспетчера
 bot = Bot(token=config.bot_token)
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler() 
 
 # Хранилище данных о занятиях
 lesson_data: Dict[int, Lesson] = {}
@@ -46,11 +48,17 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return geodesic(location1, location2).meters
 
 def get_coordinates_from_address(address):
-    geolocator = Nominatim(user_agent="Ingi Telegram")  
-    location = geolocator.geocode(address)
-    if location:
-        return location.latitude, location.longitude
-    return None, None
+    try:
+        geolocator = Nominatim(user_agent="Ingi Telegram")
+        location = geolocator.geocode(address, timeout=10)  # Увеличиваем таймаут до 10 секунд
+        if location:
+            return location.latitude, location.longitude
+        else:
+            logging.warning(f"Адрес не найден: {address}")
+            return None, None
+    except GeocoderTimedOut as e:
+        logging.error(f"Ошибка таймаута при поиске координат: {e}")
+        return None, None
 
 def get_inline_students(key: int) -> InlineKeyboardMarkup:
     buttons = []
@@ -98,14 +106,14 @@ def get_duration(time_from: str, time_to: str) -> str:
 
     return final_duration
 
-async def schedule_fail_notifications(key: int):
+async def schedule_fail_notifications(key: int, type:str = 'daily'):
     lesson = lesson_data.get(key, None)
     
-    if lesson:
-        # Время для отправки fail-сообщений
-        reminder_fail_time = dt.datetime.combine(dt.datetime.now().date() + dt.timedelta(days=1), dt.time(9, 0))
+    reminder_fail_time = dt.datetime.combine(dt.datetime.now().date() + dt.timedelta(days=1), dt.time(9, 0))
 
-        presence_fail_time = lesson.time_from - dt.timedelta(minutes=15)# за 15 минут до начала занятия
+    presence_fail_time = lesson.time_from - dt.timedelta(minutes=responce_threshold - 1)# за n-1 минут до начала занятия
+    if lesson and type == 'daily':
+        # Время для отправки fail-сообщений
         if config.test_mode:
             reminder_fail_time = dt.datetime.now() + dt.timedelta(seconds=5)# test time
             presence_fail_time = dt.datetime.now() + dt.timedelta(seconds=5)# test time
@@ -139,6 +147,7 @@ async def schedule_fail_notifications(key: int):
             )
             lesson_data[key].reminder_fail_manager = reminder_fail.id
 
+    if lesson and type in {'daily', 'today'}:
         # Планируем fail-сообщение для presence
         presence_fail_text_head, presence_fail_text_coordinator = lesson.get_presence_text_fail()
 
@@ -170,33 +179,68 @@ async def schedule_fail_notifications(key: int):
             lesson_data[key].presence_fail_manager = presence_fail.id
 
 async def daily_fetch():
-    next_day = (dt.datetime.now()+ dt.timedelta(days=1)).strftime('%Y-%m-%d') 
-    crm.update_data()
-    data = crm.get_slots_info_by_date(next_day, status=1)
-
+    logging.info('Запуск Daily Fetch')
+    next_day = (dt.datetime.now() + dt.timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    max_attempts = 5  # Максимум 5 попыток
+    attempt = 0
+    data = None
+    
+    while attempt < max_attempts:
+        logging.info(f'Попытка #{attempt + 1} получить данные из CRM для {next_day}')
+        crm = CRM()
+        data = crm.get_slots_info_by_date(next_day, status=1)
+        
+        if data != {'schools': [], 'tp': [], 'water': [], 'odin': []}:
+            logging.info(f"Получены слоты на {next_day}: {data}")
+            break
+        else:
+            logging.warning(f"CRM не вернула данных для {next_day} на попытке {attempt + 1}")
+            attempt += 1
+            await asyncio.sleep(1)  # Небольшая задержка между попытками (1 секунда)
+    
+    if data == {'schools': [], 'tp': [], 'water': [], 'odin': [], 'web': []}:
+        error_message = f"CRM не вернула данные для {next_day} после {max_attempts} попыток."
+        logging.error(error_message)
+        await bot.send_message(config.tg_ids.head_it, error_message)
+        return  # Прерываем дальнейшее выполнение, если данных так и нет
+    
     key = 0
     lesson_data.clear()
-
+    logging.info("Данные обновлены")
     for type in config.transcript.keys():
         for l in data[type]:
+            if (l['group_ids'] is None or l['teacher_ids'] is None) and l['lesson_type_id'] == 2:
+                logging.warning(f"Отсутствуют обязательные данные для слота: {l}")
+                continue
+
+            if (not l['group_ids'] or l['customer_ids'] is None) and l['lesson_type_id'] == 2:
+                logging.warning(f"Группы не найдены для слота: {l}")
+                continue
+
+            if not l['teacher_ids']:
+                logging.warning(f"Преподаватели не найдены для слота: {l}")
+                continue
+
             if config.test_mode and not l['teacher_ids'] == [650]:
                 continue
+                pass
             present_time = dt.datetime.now() + dt.timedelta(seconds=1)
-
+            logging.info(f"Обработка слота {l}")
             try:
                 location = config.transcript[type]
-                lesson = Lesson(l, location)
+                lesson = Lesson(l, location, crm)
             except Exception as e:
                 m = f'Ошибка получения карточки: {e}'
                 print(m)
-                await bot.send_message(config.tg_ids.head_it, m)
+                #await bot.send_message(config.tg_ids.head_it, m)
                 continue
 
+            print(lesson.students_list)
 
             if not lesson.acceptable:
                 await bot.send_message(lesson.head_tg, f'Ошибки в карточке {lesson.location}, {lesson.time}, {lesson.subject}\n{lesson.group_link}: {'\n'.join(lesson.errors)}')
                 continue
-
             # 1 Сообщение напоминалка о занятиях завтра
             button = InlineKeyboardButton(text=config.button_reminder_check, callback_data=f'reminder_check_{key}')
             inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[[button]]) 
@@ -205,11 +249,11 @@ async def daily_fetch():
                               args=(message_text, lesson.teacher_tg, inline_keyboard, "Markdown"), misfire_grace_time=30)
             
             
-            # 2 Сообщение за 5 мин до занятия, на месте ли преподаватель
+            # 2 Сообщение за lesson_delay мин до занятия, на месте ли преподаватель
             presence_button = InlineKeyboardButton(text=config.presence_message_check, callback_data=f'presence_check_{key}')
             presence_keyboard = InlineKeyboardMarkup(inline_keyboard=[[presence_button]])
             
-            presence_time = lesson.time_from - dt.timedelta(minutes=20)#За 20 минут до занятия
+            presence_time = lesson.time_from - dt.timedelta(minutes=lesson_delay)#За lesson_delay минут до занятия
             if config.test_mode:
                 presence_time = present_time
 
@@ -219,6 +263,74 @@ async def daily_fetch():
             lesson_data[key] = lesson
             await schedule_fail_notifications(key)
             key+=1
+    logging.info("Daily Fetch завершен")
+
+async def today_fetch():
+    logging.info('Запуск Today Fetch')
+    today = dt.datetime.now().strftime('%Y-%m-%d')  # Текущая дата
+    
+    max_attempts = 5  # Максимум 5 попыток
+    attempt = 0
+    data = None
+    
+    while attempt < max_attempts:
+        logging.info(f'Попытка #{attempt + 1} получить данные из CRM для {today}')
+        crm = CRM()
+        data = crm.get_slots_info_by_date(today, status=1)
+        
+        if data != {'schools': [], 'tp': [], 'water': [], 'odin': []}:
+            logging.info(f"Получены слоты на {today}: {data}")
+            break
+        else:
+            logging.warning(f"CRM не вернула данных для {today} на попытке {attempt + 1}")
+            attempt += 1
+            await asyncio.sleep(1)  # Небольшая задержка между попытками (1 секунда)
+    if data == {'schools': [], 'tp': [], 'water': [], 'odin': []}:
+        error_message = f"CRM не вернула данные для {today} после {max_attempts} попыток."
+        logging.error(error_message)
+        await bot.send_message(config.tg_ids.head_it, error_message)
+        return  # Прерываем дальнейшее выполнение, если данных так и нет
+    
+    key = 0
+    lesson_data.clear()
+    logging.info("Данные обновлены")
+    for type in config.transcript.keys():
+        for l in data[type]:
+            if config.test_mode and not l['teacher_ids'] == [650]:
+                pass
+            present_time = dt.datetime.now() + dt.timedelta(seconds=1)
+            logging.info(f"Обработка слота {l}")
+            try:
+                location = config.transcript[type]
+                lesson = Lesson(l, location, crm)
+            except Exception as e:
+                m = f'Ошибка получения карточки: {e}'
+                print(m)
+                await bot.send_message(config.tg_ids.head_it, m)
+                continue
+
+            if not lesson.acceptable:
+                await bot.send_message(lesson.head_tg, f'Ошибки в карточке {lesson.location}, {lesson.time}, {lesson.subject}\n{lesson.group_link}: {"\n".join(lesson.errors)}')
+                continue
+
+            # Пропускаем шаг с отправкой напоминания о занятиях на завтра
+
+            # 2 Сообщение за 5 минут до занятия, на месте ли преподаватель
+            presence_button = InlineKeyboardButton(text=config.presence_message_check, callback_data=f'presence_check_{key}')
+            presence_keyboard = InlineKeyboardMarkup(inline_keyboard=[[presence_button]])
+            
+            presence_time = lesson.time_from - dt.timedelta(minutes=20)  # За 20 минут до занятия
+            if config.test_mode:
+                presence_time = present_time
+
+            scheduler.add_job(send_scheduled_message, 'date', run_date=presence_time,
+                              args=(config.presence_message_text, lesson.teacher_tg, presence_keyboard, "Markdown"), misfire_grace_time=30)
+
+            lesson_data[key] = lesson
+            #await schedule_fail_notifications(key, 'today')
+            key += 1
+    logging.info("Today Fetch завершен")
+
 
 async def send_scheduled_message(message, user_id, inline_keyboard=None, parse_mode = None):
     try:
@@ -244,15 +356,23 @@ async def process_reminder_callback(callback_query: types.CallbackQuery):
             scheduler.remove_job(job_id)
 
         message_head, message_coor = lesson.get_reminder_text()
+        if '_' in message_coor:
+            message_coor = message_coor.replace('_', r'\_')
+            message_head = message_head.replace('_', r'\_')
+
         if message_head:
             await bot.send_message(chat_id=lesson.head_tg, text=message_head, parse_mode='Markdown')
         
         await bot.send_message(chat_id=lesson.coordinator_tg, text=message_coor, parse_mode='Markdown')
         if lesson.manager_tg:
-            await bot.send_message(chat_id=lesson.manager_tg, text=message_coor, parse_mode='Markdown')
-        
+            try:
+                await bot.send_message(chat_id=lesson.manager_tg, text=message_coor, parse_mode='Markdown')
+                await bot.send_message(chat_id=tg_ids.manager_kostygova, text=message_coor, parse_mode='Markdown')
+                await bot.send_message(chat_id=tg_ids.ing_alisa, text=message_coor, parse_mode='Markdown')
+            except Exception as e:
+                logging.info(f'Не удалось отправить подтверждение напоминания менеджерам {e}')
         logging.info(f"Напоминание подтверждено для {lesson.teacher_fio} на {lesson.time} для группы {lesson.group_name}")
-
+        await callback_query.message.edit_reply_markup(reply_markup=None)
     else:
         await bot.send_message(chat_id=callback_query.from_user.id, text="Ошибка: информация о занятии не найдена.")
 
@@ -273,18 +393,7 @@ async def process_presence_callback(callback_query: types.CallbackQuery, state =
 
         #Сказать координатору что на месте, отправить все для отметки детей 
         await state.update_data(key=key)
-        if lesson.location_type == 'schools':
-            if config.do_geo_request:
-                await request_geo(callback_query.message, state)
-            else:
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.attendance_message_check, 
-                                                                               callback_data=f'attendance_check_{key}_load')]])
-                await bot.send_message(chat_id=lesson.teacher_tg, text=config.attendance_message_text, reply_markup=keyboard)
-            pass
-        else:
-            await bot.send_message(chat_id=callback_query.from_user.id, text=config.lesson_theme_request_text)
-            await state.set_state(Form.waiting_for_message)
-        logging.info(f"Присутсвие подтверждено для {lesson.teacher_fio} на {lesson.time} для группы {lesson.group_name}")
+        await process_lesson_confirmation(callback_query.message, state)
             # Продолжить процесс
             #await process_lesson_confirmation(callback_query, state)
 
@@ -295,11 +404,14 @@ async def process_presence_callback(callback_query: types.CallbackQuery, state =
                                                                                callback_data=f'attendance_check_{key}_load')]])
         await bot.send_message(chat_id=lesson.teacher_tg, text=config.attendance_message_text, reply_markup=keyboard)
         '''
+        await callback_query.message.edit_reply_markup(reply_markup=None)
     else:
         await bot.send_message(chat_id=callback_query.from_user.id, text=f"Ошибка: информация о занятии не найдена. {lesson_data}\n{callback_query.data}")
 
 async def request_geo(message: types.Message, state: FSMContext):
-    await bot.send_message(chat_id=message.from_user.id, text="Пожалуйста, отправь свою геолокацию.\nНе забудь выключить VPN!")
+    data = await state.get_data()
+    key = data.get('key')
+    await bot.send_message(chat_id=lesson_data[key].teacher_tg, text="Пожалуйста, отправь свою геолокацию.\nНе забудь выключить VPN!")
     await state.set_state(Form.waiting_for_location)
 
 @dp.message(Form.waiting_for_location)
@@ -312,6 +424,7 @@ async def process_location_message(message: types.Message, state: FSMContext):
     if lesson:
         # Получаем координаты из адреса
         lesson_lat, lesson_lon = get_coordinates_from_address(lesson.address)
+        logging.info(f"Адрес: {lesson.address}, координаты: ({lesson_lat}, {lesson_lon})")
 
         if lesson_lat is None or lesson_lon is None:
             await bot.send_message(chat_id=message.chat.id, text="Не удалось определить координаты места занятия. Пожалуйста, обратитесь к координатору.")
@@ -329,10 +442,28 @@ async def process_lesson_confirmation(message, state: FSMContext):
     data = await state.get_data()
     key = data.get('key')
     lesson = lesson_data.get(key, None)
-
+    if lesson.location_type == 'schools':
+            if config.do_geo_request:
+                await request_geo(message, state)
+            else:
+                await bot.send_message(chat_id=lesson.teacher_tg, text=config.lesson_theme_request_text)
+                await state.set_state(Form.waiting_for_message)
+                '''
+                
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.attendance_message_check, 
+                                                                               callback_data=f'attendance_check_{key}_load')]])
+                await bot.send_message(chat_id=lesson.teacher_tg, text=config.attendance_message_text, reply_markup=keyboard)
+                '''
+            pass
+    else:
+        await bot.send_message(chat_id=lesson.teacher_tg, text=config.lesson_theme_request_text)
+        await state.set_state(Form.waiting_for_message)
+    group_name_info = lesson.group_name if hasattr(lesson, 'group_name') else "Индивидуальное занятие/собеседование"
+    logging.info(f"Присутствие подтверждено для {lesson.teacher_fio} на {lesson.time} для группы {group_name_info}")
+    #logging.info(f"Присутсвие подтверждено для {lesson.teacher_fio} на {lesson.time} для группы {lesson.group_name}")
     # Запрашиваем тему занятия
-    await bot.send_message(chat_id=message.chat.id, text=config.lesson_theme_request_text)
-    await state.set_state(Form.waiting_for_message)
+    #await bot.send_message(chat_id=message.chat.id, text=config.lesson_theme_request_text)
+    #await state.set_state(Form.waiting_for_message)
     '''
     message_head, message_coor = lesson.get_presence_text()
     if message_head:
@@ -340,28 +471,37 @@ async def process_lesson_confirmation(message, state: FSMContext):
     
     await bot.send_message(chat_id=lesson.coordinator_tg, text=message_coor, parse_mode='Markdown')
     await bot.send_message(chat_id=lesson.manager_tg, text=message_coor, parse_mode='Markdown')
-    
-    '''
-
     if lesson.location != config.transcript['schools']:
         # Если это гш, запускаем алгоритм по отметке детей
         await send_message_feedback(key)
+    
+    '''
+
 
 @dp.message(Form.waiting_for_message)
 async def handle_next_message(message: types.Message, state: FSMContext):
     data = await state.get_data()
     key = data.get('key')
-    lesson_data[key].lesson_theme = message.text
     #await message.answer(f"Вы отправили: {message.text} для урока с ключом {key}")
     # Сбрасываем состояние
     await state.clear()
-    
+     
+    lesson_data[key].lesson_theme = message.text
+    #print(lesson_data[key].lesson_theme)
+
+
+    group_info = lesson_data[key].group_link if hasattr(lesson_data[key], 'group_link') else "Индивидуальное занятие/собеседование"
+
     message_head, message_coor = lesson_data[key].get_presence_text()
+    if '_' in message_coor:
+            message_coor = message_coor.replace('_', r'\_')
+            message_head = message_head.replace('_', r'\_')
     if message_head:
         await bot.send_message(chat_id=lesson_data[key].head_tg, text=message_head, parse_mode='Markdown')
     
     await bot.send_message(chat_id=lesson_data[key].coordinator_tg, text=message_coor, parse_mode='Markdown')
-    if not lesson_data[key].manager_tg:
+    await bot.send_message(chat_id=tg_ids.ing_admin, text=message_coor + f'\n {group_info}', parse_mode='Markdown')
+    if lesson_data[key].manager_tg:
         await bot.send_message(chat_id=lesson_data[key].manager_tg, text=message_coor, parse_mode='Markdown')
 
     if lesson_data[key].location == config.transcript['schools']:
@@ -382,6 +522,7 @@ async def send_message_feedback(key:int):
         InlineKeyboardButton(text='Нет', callback_data=f'feedback_{key}_no')]])
 
     await bot.send_message(lesson.teacher_tg, config.message_feedback_request_text, reply_markup=keyboard)
+    
 
 async def process_attendance_callback(callback_query: types.CallbackQuery):
     key, index = callback_query.data.replace('attendance_check_', '').split('_')
@@ -390,6 +531,7 @@ async def process_attendance_callback(callback_query: types.CallbackQuery):
     if index == 'load':
         keyboard = get_inline_students(key)
         await bot.send_message(callback_query.from_user.id, text = config.attendance_message_load, reply_markup=keyboard)
+        await callback_query.message.edit_reply_markup(reply_markup=None)
         return None
     elif index == 'cancel':
         lesson_data[key].students_selected = []
@@ -406,19 +548,31 @@ async def process_attendance_callback(callback_query: types.CallbackQuery):
         #coordinator = config.vlad
         #Отправить координатору список присудствующих
         message_head, message_coor = lesson_data[key].get_attendance_text()
+        if '_' in message_coor:
+            message_coor = message_coor.replace('_', r'\_')
+            message_head = message_head.replace('_', r'\_')
         if message_head != '':
             await bot.send_message(chat_id=lesson_data[key].head_tg, text=message_head, parse_mode='Markdown')
         
         await bot.send_message(chat_id=lesson_data[key].coordinator_tg, text=message_coor, parse_mode='Markdown')
         if lesson_data[key].manager_tg:
-            await bot.send_message(chat_id=lesson_data[key].manager_tg, text=message_coor, parse_mode='Markdown')
+            try:
+                await bot.send_message(chat_id=lesson_data[key].manager_tg, text=message_coor, parse_mode='Markdown')
+                await bot.send_message(chat_id=tg_ids.ing_alisa, text=message_coor, parse_mode='Markdown')
+                await bot.send_message(chat_id=tg_ids.manager_kostygova, text=message_coor, parse_mode='Markdown')
+            except Exception as e:
+                logging.info(f'Не удалось отправить подтверждение напоминания менеджерам {e}')
         
         await send_message_feedback(key)
 
         logging.info(f"Посещаемость отправлена от {lesson_data[key].teacher_fio} на {lesson_data[key].time} для группы {lesson_data[key].group_name}")
+        await callback_query.message.edit_reply_markup(reply_markup=None)
         return None
-    keyboard = get_inline_students(key)
-    await callback_query.message.edit_reply_markup(reply_markup=keyboard)
+    new_keyboard = get_inline_students(key)
+    try:
+        await callback_query.message.edit_reply_markup(reply_markup=new_keyboard)
+    except:
+        pass
     #Здесь
 
 async def process_feedback_callback(callback_query: types.CallbackQuery, state = FSMContext):
@@ -433,6 +587,7 @@ async def process_feedback_callback(callback_query: types.CallbackQuery, state =
         await state.set_state(Form.waiting_for_feedback)
     elif index == 'no':
         await bot.send_message(lesson.teacher_tg, config.message_feedback_last)
+    await callback_query.message.edit_reply_markup(reply_markup=None)
 
 @dp.message(Form.waiting_for_feedback)
 async def process_feedback_message(message: types.Message, state: FSMContext):
@@ -462,26 +617,37 @@ async def process_feedback_message(message: types.Message, state: FSMContext):
         if message_head != '':
             await bot.send_photo(chat_id=lesson.head_tg, photo=lesson.photo, caption=message_head, parse_mode='Markdown')
         await bot.send_photo(chat_id=lesson.coordinator_tg, photo=lesson.photo, caption=message_coor, parse_mode='Markdown')
+        await bot.send_photo(chat_id=tg_ids.ing_admin, photo=lesson.photo, caption=message_coor, parse_mode='Markdown')
     else:
         if message_head != '':
             await bot.send_message(chat_id=lesson.head_tg, text=message_head, parse_mode='Markdown')
         
         await bot.send_message(chat_id=lesson.coordinator_tg, text=message_coor, parse_mode='Markdown')
+        await bot.send_message(chat_id=tg_ids.ing_admin, text=message_coor, parse_mode='Markdown')
 
 async def on_startup(dp: Dispatcher):
-    scheduler.start()
+    logging.info("Starting bot...")
+    
+
+    if not scheduler.running:  # Проверим, не запущен ли планировщик
+        scheduler.start()
+        logging.info("Scheduler started")
+    else:
+        logging.info("Scheduler is already running")
 
     # Пример тестовой задачи
     #await send_scheduled_message("Тестовое сообщение для проверки вручную", config.vlad)
     #
     if config.test_mode:
+        logging.info('Вызов Daily Fetch в тестовом режиме')
         await daily_fetch()
+        #await today_fetch()
     else:
-        scheduler.add_job(daily_fetch, CronTrigger(hour=21, minute=0))
-    #scheduler.add_job(daily_fetch, 'cron', hour=0, minute=0)
+        logging.info('Запланирован Daily Fetch в обычном режиме')
+        scheduler.add_job(daily_fetch, 'cron', hour=20, minute=20, id='daily_fetch', replace_existing=True)
+        #scheduler.add_job(daily_fetch, CronTrigger(hour=21, minute=0), id='daily fetch')
 
 async def main():
-    print("Starting main()")  # Отладочный вывод
     router = Router()
     router.callback_query.register(process_reminder_callback, F.data.startswith('reminder_check'))
     router.callback_query.register(process_presence_callback, F.data.startswith('presence_check'))
@@ -492,9 +658,9 @@ async def main():
 
     await on_startup(dp)
 
-    print("Запуск polling")  # Отладочный вывод
+    logging.info("Запуск polling")  # Отладочный вывод
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    print("Запуск программы")  # Отладочный вывод
+    logging.info("Запуск программы")  # Отладочный вывод
     asyncio.run(main())

@@ -3,7 +3,7 @@ import requests
 import datetime as dt
 from typing import List
 
-from config import CRM_CREDENTIALS
+from config import CRM_CREDENTIALS, locations_raw
 
 class CRM:
     """
@@ -156,39 +156,35 @@ class CRM:
             'branch_id'
         ]
         """
-        rooms = {# config for room_id
-        'schools': {177, None}, 
-        'tp': {201, 232, 233, 234, 183, 184, 41, 42, 2, 3, 4, 40, 190},
-        'water': {202, 169, 170, 171},
-        'odin': { 173, 172, 174},
-        }
+        rooms = locations_raw # config for room_id
         data_whitelist = [
-            'status', 
+            'status',
             'subject_id',
             'lesson_type_id',
             'room_id',
-            #'date',
             'time_from',
             'time_to',
             'group_ids',
             'customer_ids',
             'teacher_ids',
+            'note'
         ]
-        date_start, date_end = date, date
-        data = self.get_groups_by_date(date_start, date_end, status= status)
-        res = {i:[] for i in rooms.keys()}
         
+        date_start, date_end = date, date
+        data = self.get_groups_by_date(date_start, date_end, status=status)
+        res = {i: [] for i in rooms.keys()}
+
         for slot in data:
             room_id = slot['room_id']
+            #print(room_id)
             for type in rooms:
-                #print(type)
                 if room_id in rooms[type]:
                     new_slot = {}
                     for key in data_whitelist:
                         try:
                             new_slot[key] = slot[key]
                         except Exception as e:
-                             print(f'Нет параметра {key}, \n{e}\n{slot}')
+                            print(f'Нет параметра {key}, \n{e}\n{slot}')
                     res[type].append(new_slot)
         return res
 

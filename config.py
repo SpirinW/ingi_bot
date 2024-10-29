@@ -1,11 +1,15 @@
-test_mode = True
-do_geo_request = True
+test_mode = True 
+do_geo_request = False
+do_it_head_notifications = True
+lesson_delay = 25#mins
+responce_threshold = 10#mins
 
 vlad = '289988172'
 test_token = "6402177202:AAHVauhCoi7zgnnntjYr2QVP2pfWptKBSsg"
 bot_token_old = '5798234250:AAFjVCvv-INz601SOxy0yLE9jxKGDgCBiXY'
 bot_token = '7381557017:AAG8l8Xbzv1NJaHP3HFAQjQHuTdr092YOUM' #актуальный
-#bot_token = test_token
+if test_mode:
+    bot_token = test_token
 #crm
 CRM_CREDENTIALS = {
     "email": "ks@emtc.ru",
@@ -25,10 +29,13 @@ class tg_ids:
     head_3d = 509739897 # Королев Сергей
     coordinator_3d = 764502758 # Величко Дарья
 
-    manager_smirnov = 1971878796,
-    manager_ryazanova = 6131375593,
+    manager_smirnov = 1971878796
+    manager_ryazanova = 6131375593
     manager_kostygova = 373394696
 
+    ing_admin = 5891367829
+    ing_alisa = 504282464
+    
 manager_transcript = {
     'Менеджер школы: Смирнов': 1971878796,
     'Менеджер школы: Рязанова': 6131375593
@@ -36,9 +43,10 @@ manager_transcript = {
 
 locations_raw = {
     'schools': {177, None}, 
-    'tp': {201, 232, 233, 234, 183, 184, 41, 42, 2, 3, 4, 40, 190},
+    'tp': {201, 232, 233, 234, 183, 184, 41, 42, 2, 3, 4, 40, 190, 241},
     'water': {202, 169, 170, 171},
-    'odin': {202, 169, 170, 171}
+    'odin': {172, 173, 174},
+    'web': {182}
 }
 
 tg_admins = {key for name, key in vars(tg_ids).items() if not name.startswith('__')}
@@ -48,6 +56,7 @@ transcript = {
     'tp': 'ТП Бауманская',
     'water': 'Тп Водный',
     'odin': 'Тп Одинцово',
+    'web': 'Вебинар'
 }
 check_mark = '✅'
 
