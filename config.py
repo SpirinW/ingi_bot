@@ -5,6 +5,7 @@ test_mode = True
 do_geo_request = False
 geo_max_distance = 100 # В метрах
 do_it_head_notifications = False
+do_3d_head_notifications = True
 lesson_delay = 25 #mins
 responce_threshold = 10 #mins
 
@@ -24,20 +25,18 @@ CRM_CREDENTIALS = {
 vlad = '289988172'
 
 class TgIds:
-    head_it= 6502271152 # Спирин Владислав
-    coordinator_it = 7549422280 #Елена Ларина #6467883559 # Злобина Екатерина
+    head_it = int(os.getenv("HEAD_IT", 0))
+    coordinator_it = int(os.getenv("COORDINATOR_IT", 0))
+    vlad_personal = int(os.getenv("VLAD_PERSONAL", 0))
     coordinator_it = head_it
-    vlad_personal = 289988172
+    head_3d = int(os.getenv("HEAD_3D", 0))
+    coordinator_3d = int(os.getenv("COORDINATOR_3D", 0))
 
-    head_3d = 509739897 # Королев Сергей
-    coordinator_3d = 764502758 # Величко Дарья
+    manager_smirnov = int(os.getenv("MANAGER_SMIRNOV", 0))
+    manager_ryazanova = int(os.getenv("MANAGER_RYAZANOVA", 0))
+    manager_kostygova = int(os.getenv("MANAGER_KOSTYGOVA", 0))
 
-    manager_smirnov = 1971878796
-    manager_ryazanova = 6131375593
-    manager_kostygova = 373394696
-
-    ing_admin = 2018429689 #Татьяна #старый  5891367829
-    #ing_alisa = 504282464
+    ing_admin = int(os.getenv("ING_ADMIN", 0))
     
 manager_transcript = {
     'Менеджер школы: Смирнов': TgIds.manager_smirnov,

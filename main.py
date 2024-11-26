@@ -448,18 +448,7 @@ async def process_lesson_confirmation(message: Message, state: FSMContext) -> No
     # Запрашиваем тему занятия
     #await bot.send_message(chat_id=message.chat.id, text=raw_texts.lesson_theme_request_text)
     #await state.set_state(Form.waiting_for_message)
-    '''
-    message_head, message_coor = lesson.get_presence_text()
-    if message_head:
-        await bot.send_message(chat_id=lesson.head_tg, text=message_head, parse_mode='Markdown')
     
-    await bot.send_message(chat_id=lesson.coordinator_tg, text=message_coor, parse_mode='Markdown')
-    await bot.send_message(chat_id=lesson.manager_tg, text=message_coor, parse_mode='Markdown')
-    if lesson.location != config.transcript['schools']:
-        # Если это гш, запускаем алгоритм по отметке детей
-        await send_message_feedback(key)
-    
-    '''
 
 
 @dp.message(Form.waiting_for_message)

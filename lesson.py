@@ -3,7 +3,7 @@ from geopy.geocoders import Nominatim
 
 import config
 import raw_texts
-from config import do_it_head_notifications
+from config import do_it_head_notifications, do_3d_head_notifications
 from crm import CRM
 from db import TeachersDatabase
 import re
@@ -366,8 +366,11 @@ class Lesson():
                 f"Место: {self.location}, аудитория {self.classroom}\n"
                 f"Время: {self.time}\n"
             )
-        if not do_it_head_notifications:
+        if self.theme == 'IT' and not do_it_head_notifications:
             return '', message_text 
+        elif self.theme == '3D' and not do_3d_head_notifications:
+            return '', message_text 
+
         return message_text, message_text
  
     def get_reminder_text_fail(self) -> Tuple[str, str]:
@@ -397,8 +400,7 @@ class Lesson():
                     f"🆘Педагог {self.teacher_fio}, не отвечает на подтверждение {self.subject}\n"
                     f"Адрес: {self.loc_info}, Аудитория: {self.classroom}, время {self.time}"
                 )
-        if not do_it_head_notifications:
-            return '', message_text 
+         
         return message_text, message_text
     
     def get_presence_text(self) -> Tuple[str, str]:
@@ -451,8 +453,10 @@ class Lesson():
                     f"Тема: {self.lesson_theme}"
                 )
 
-        if not do_it_head_notifications:
+        if self.theme == 'IT' and not do_it_head_notifications:
             return '', message_text 
+        elif self.theme == '3D' and not do_3d_head_notifications:
+            return '', message_text  
         return message_text, message_text
     
  
@@ -490,6 +494,7 @@ class Lesson():
                     f"Место: {self.location}, Аудитория: {self.classroom}, время {self.time}\n"
                     f"Необходимо срочно связаться с администратором и преподавателем ❗️❗️❗️"
                 )
+        
         return message_text, message_text    
 
     def get_attendance_text(self) -> Tuple[str, str]: 
@@ -519,8 +524,10 @@ class Lesson():
                 f"Ученики: \n{'\n'.join(self.students_selected)}\n"
                 f"{self.group_link}"
             )
-        if not do_it_head_notifications:
+        if self.theme == 'IT' and not do_it_head_notifications:
             return '', message_text 
+        elif self.theme == '3D' and not do_3d_head_notifications:
+            return '', message_text  
         return message_text, message_text
 
     def get_feedback_text(self) -> Tuple[str, str]:
