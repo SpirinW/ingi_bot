@@ -2,31 +2,21 @@ import datetime as dt
 from geopy.geocoders import Nominatim
 
 import config
+import raw_texts
 from config import do_it_head_notifications
 from crm import CRM
-from db import Teachers_database
-
+from db import TeachersDatabase
+import re
+from typing import Optional, Tuple, List, Dict
 # Инициализация данных CRM глобально
 #: CRM = 
-db = Teachers_database()
+db = TeachersDatabase()
 
-def get_coordinates_from_address(address: str):
-    """Получить координаты из адреса."""
-    geolocator = Nominatim(user_agent="Ingi Telegram")
-    location = geolocator.geocode(address, timeout=10)
-    if location:
-        return location.latitude, location.longitude
-    return None, None
 
-def create_yandex_maps_link(address: str):
-    """Создать ссылку для Яндекс.Карт с координатами, если они есть."""
-    latitude, longitude = get_coordinates_from_address(address)
-    if latitude and longitude:
-        return f"https://yandex.ru/maps/?ll={longitude},{latitude}&z=16"
-    return f"https://yandex.ru/maps/?text={address.replace(' ', '+')}"  # Заменяем пробелы на '+' для лучшей работы на телефонах
 
 class Lesson():
-    def __init__(self, data: dict, location: str, crm: CRM):
+    
+    def __init__(self) -> None:
         self.reminder_fail_head = None  # Идентификатор задачи для отмены сообщения
         self.reminder_fail_coordinator = None  
         self.reminder_fail_manager = None  
@@ -35,28 +25,89 @@ class Lesson():
         self.presence_fail_manager = None
 
         self.errors = []
+
+
+        self.lesson_type_id = None
+        self.group_type = None
+        
+        self.teacher_selected = False
+
+        self.address = None
+        self.manager_tg = None
+
+        self.lesson_theme = 'None'
+        self.feedback = ''
+        self.group_name = None
+
+    @staticmethod
+    def escape_markdown(text: str, version: str = "MarkdownV1") -> str:
+        """
+        Экранирует специальные символы для Markdown или MarkdownV2.
+        """
+        if version == "MarkdownV2":
+            escape_chars = r"_|*[]()~`>#+-=|{}.!"
+        else:
+            escape_chars = r"_*[]()"
+        return re.sub(rf"([{re.escape(escape_chars)}])", r"\\\1", text)
+
+    @staticmethod
+    def get_coordinates_from_address(address: str) -> tuple[float, float]:
+        """Получить координаты из адреса."""
+        geolocator = Nominatim(user_agent="Ingi Telegram")
+        location = geolocator.geocode(address, timeout=10)
+        if location:
+            return location.latitude, location.longitude
+        return None, None
+
+    @staticmethod
+    def create_yandex_maps_link(address: str) -> str:
+        """Создать ссылку для Яндекс.Карт с координатами, если они есть."""
+        latitude, longitude = Lesson.get_coordinates_from_address(address)
+        if latitude and longitude:
+            return f"https://yandex.ru/maps/?ll={longitude},{latitude}&z=16"
+        return f"https://yandex.ru/maps/?text={address.replace(' ', '+')}"  # Заменяем пробелы на '+' для лучшей работы на телефонах
+    
+    def parse_data(self, data: dict, location: str, crm: CRM) -> None:
+        
+
         self.data = data
 
-        # Используем глобальные переменные для инициализации атрибутов урока
         self.location = location
         #self.location_type  = [k for k in config.locations_raw.keys() if data['room_id'] in config.locations_raw[k]][0]
         self.location_type = next((k for k, v in config.locations_raw.items() if data['room_id'] in v), None)
         
-        self.lesson_type_id = None
 
         if self.data['lesson_type_id'] == 1:
             self.lesson_type_id = 'private'
-        elif self.data['lesson_type_id'] == 2:
-            self.lesson_type_id = 'group'
+            if self.data['room_id'] == 182:
+                self.group_type = 'web'
+            else:
+                self.group_type = 'tp'
+
         elif self.data['lesson_type_id'] == 3:
             self.lesson_type_id = 'interview'
-        
-        
+            if self.data['room_id'] == 182:
+                self.group_type = 'web'
+            else:
+                self.group_type = 'tp'
 
+        elif self.data['lesson_type_id'] in {4, 5, 6, 7, 15}:
+            self.lesson_type_id = 'group'
+            if self.data['room_id'] == 182:
+                self.group_type = 'web'
+            else:
+                self.group_type = 'school'
+
+        elif self.data['lesson_type_id'] in range(2, 18) and self.data['lesson_type_id'] not in {4, 5, 6, 7, 15, 3}:
+            self.lesson_type_id = 'group'
+            if self.data['room_id'] == 182:
+                self.group_type = 'web'
+            else:
+                self.group_type = 'tp'
+        
         self.classroom = self._get_classroom_name(data['room_id'], crm)
         self.subject = self._get_subject_name(data['subject_id'], crm)
         
-        self.teacher_selected = False
         if data['teacher_ids'] == []:
             self.teacher_info = "Не указан педагог"
             self.errors.append("Не указан педагог")
@@ -66,7 +117,6 @@ class Lesson():
             self.teacher_tg = db.get_teacher_by_crm_id(self.teacher_info.get('id', None))[2]
             self.teacher_fio = self.teacher_info['name']
 
-            #print(self.teacher_tg)
             if not self.teacher_tg:
                 self.errors.append(f"Педагог не зарегистрирован в боте")
         #Тестирование бота
@@ -86,58 +136,56 @@ class Lesson():
         self.theme = 'Не указана'
         if data['subject_id'] in config.it_subjects.keys():
             self.theme = 'IT'
-            self.head_tg = config.tg_ids.head_it
-            self.coordinator_tg = config.tg_ids.coordinator_it
+            self.head_tg = config.TgIds.head_it
+            self.coordinator_tg = config.TgIds.coordinator_it
             #Убрать после теста 
-            #self.coordinator_tg = config.tg_ids.head_it
-        else:
+            #self.coordinator_tg = config.TgIds.head_it
+        elif data['subject_id'] in config.robo_3d_subjects.keys():
             self.theme = '3D'
-            self.head_tg = config.tg_ids.head_3d
-            self.coordinator_tg = config.tg_ids.coordinator_3d
+            self.head_tg = config.TgIds.head_3d
+            self.coordinator_tg = config.TgIds.coordinator_3d
             # потом убрать ниже
-            #self.head_tg = config.tg_ids.head_it
-            #self.coordinator_tg = config.tg_ids.head_it
+            #self.head_tg = config.TgIds.head_it
+            #self.coordinator_tg = config.TgIds.head_it
+        else:
+            self.errors.append(f'Предмета нет в БД для ИТ и 3D {data}')
 
-        self.address = None
-        self.manager_tg = None
 
         if self.lesson_type_id == 'group':
             self.group_name = data.get('group_name', 'Групповое занятие')
         elif self.lesson_type_id == 'private':
-            student_name = ', '.join(self.students_list) if self.students_list else "Студент не указан"
+            student_name = ', '.join(self.students_list) if self.students_list else "Ученик не указан"
             self.group_name = f"Индивидуальное занятие с {student_name}"
         elif self.lesson_type_id == 'interview':
-            student_name = ', '.join(self.students_list) if self.students_list else "Студент не указан"
+            student_name = ', '.join(self.students_list) if self.students_list else "Ученик не указан"
             self.group_name = f"Собеседование с {student_name}"
         elif self.location == 'web':
             self.group_name = f"Вебинар по ссылке"
         else:
             self.group_name = "Занятие без группы"
-        #print(self.location_type)
+        
 
         if self.lesson_type_id == 'group':
             self._get_group_data(data, crm)
         elif self.lesson_type_id == 'private':
             self._get_private_data(data)
-        self.lesson_theme = 'None'
-        self.feedback = ''
+        
+
+        
         self.acceptable = len(self.errors) == 0
-        #print(self.teacher_tg, self.head_tg, self.coordinator_tg, self.manager_tg)
 
-
-    def _get_private_data(self, data):
+    def _get_private_data(self, data) -> None:
         self.group_name = "Индивидуальное занятие"
         self.group_id = None
         self.address = "Вебинар" if self.location == 'web' else "Не указано"  # Обновлено для типа 'web'
         self.loc_info = f'{self.location}, [Ссылка на Вебинар]({data['note']})'
 
-    def _get_group_data(self, data, crm: CRM):
-        self.group_name = None
+    def _get_group_data(self, data, crm: CRM) -> None:
         self.group_id = data['group_ids'][0] if data['group_ids'] else None
         if self.group_id:
             group_info = crm.get_group_info(self.group_id)
             if group_info:
-                self.group_name = group_info['name']
+                self.group_name = Lesson.escape_markdown(group_info['name'])
                 self.group_link = f"[Группа в CRM](https://inginirium.s20.online/company/2/group/view?id={self.group_id})"
 
             else:
@@ -149,8 +197,9 @@ class Lesson():
     
         if 'Менеджер школы:' in group_info['note']:
             self.location = config.transcript['schools']
+            self.group_type = 'school'
 
-        if self.location == config.transcript['schools']:
+        if self.group_type == 'school':
             try:
                 raw_text = group_info['note'].split(f'|')
                 self.address = raw_text[0]
@@ -160,21 +209,23 @@ class Lesson():
                     if m in self.manager:
                         self.manager_tg = config.manager_transcript[m]
                         break
-                #print(self.manager, self.manager_tg)
                 self.classroom = raw_text[2]
-                link = create_yandex_maps_link(self.address)  # Используем новую функцию для создания ссылки
+                link = Lesson.create_yandex_maps_link(self.address)  # Используем новую функцию для создания ссылки
                 self.loc_info = f'{self.location}, [{self.address}]({link})'
             except:
                 print(f'Нерпавильно заполнена группа {self.group_name}')
 
-    def _get_classroom_name(self, room_id: int, crm:CRM) -> str:
+    @staticmethod
+    def _get_classroom_name(room_id: int, crm:CRM) -> str:
         classroom = next((loc['name'] for loc in crm.locations if loc['id'] == room_id), "Unknown location")
         return classroom
 
-    def _get_subject_name(self, subject_id: int, crm:CRM) -> str:
+    @staticmethod
+    def _get_subject_name(subject_id: int, crm:CRM) -> str:
         return crm.subjects.get(subject_id, "Unknown subject")
-
-    def _get_teacher_info(self, teacher_id: int, crm:CRM) -> dict:
+    
+    @staticmethod
+    def _get_teacher_info(teacher_id: int, crm:CRM) -> dict:
         return next((teacher for teacher in crm.teachers if teacher['id'] == teacher_id), {"name": "Unknown teacher"})
 
     def get_duration(self) -> str:
@@ -201,7 +252,7 @@ class Lesson():
 
         return final_duration
     
-    def __str__(self):
+    def __str__(self) -> str:
         return (f"Lesson:\n"
                 f"  Location: {self.location}\n"
                 f"  Subject: {self.subject}\n"
@@ -216,26 +267,27 @@ class Lesson():
                 f"  Students (Selected): {', '.join(self.students_selected)}")
 
     def get_message_reminder(self) -> str:
-        student_names = ', '.join(self.students_list) if self.students_list else "Студент не указан"
-        print(self.lesson_type_id, self.location)
-        if self.lesson_type_id == 'private' and self.location != config.transcript['web']:
+        student_names = ', '.join(self.students_list) if self.students_list else "Ученик не указан"
+        #print(self.lesson_type_id, self.location)
+        self.loc_info = getattr(self, 'loc_info', self.location)
+        if self.lesson_type_id == 'private' and self.group_type == 'tp':
             # Индивидуальное занятие
             message_text = (
                 f"Привет!\nНапоминаю тебе о завтрашнем индивидуальном занятии:\n"
-                f"Студент: {student_names}\n"
-                f"Предмет: {self.subject}\nВремя: {self.time}\nДлительность: {self.duration}\n"
+                f"Ученик: {student_names}\n"
+                f"Предмет: {self.subject}\nАудитория: {self.classroom}\nВремя: {self.time}\nДлительность: {self.duration}\n"
                 f"Пожалуйста, подтверди готовность!👇"
             )
-        elif self.lesson_type_id in ('private', 'interview') and self.location == config.transcript['web']:
+        elif self.lesson_type_id in ('private', 'interview') and self.group_type == 'web':
             # Вебинар
             webinar_link = self.data.get('note', None)
             if webinar_link != '':
-                webinar_link = f"[Ссылка]({webinar_link}) на вебинар:"
+                webinar_link = f"[Ссылка]({webinar_link}) на вебинар"
             else: 
-                webinar_link = f'Ссылка на вебинар не указана в срм, обратись к [администратору](https://t.me/@inginirium_adminn)'
+                webinar_link = f'Ссылка на вебинар не указана в срм, обратись к [администратору](https://t.me/inginirium_adminn)'
             message_text = (
                 f"Привет!\nНапоминаю тебе о завтрашнем вебинаре:\n"
-                f"Студент: {student_names}\n"
+                f"Ученик: {student_names}\n"
                 f"Предмет: {self.subject}\nВремя: {self.time}\n{webinar_link}\n"
                 f"Пожалуйста, подтверди готовность!👇"
             )
@@ -243,13 +295,25 @@ class Lesson():
             # Собеседование
             message_text = (
                 f"Привет!\nНапоминаю тебе о завтрашнем собеседовании с:\n"
-                f"Студент: {student_names}\n"
-                f"Предмет: {self.subject}\nВремя: {self.time}\n"
+                f"Ученик: {student_names}\n"
+                f"Предмет: {self.subject}\nАудитория: {self.classroom}\nВремя: {self.time}\n"
                 f"Пожалуйста, подтверди готовность!👇"
             )
+        elif self.lesson_type_id == 'group' and self.group_type == 'web':
+            webinar_link = self.data.get('note', None)
+            if webinar_link != '':
+                webinar_link = f"[Ссылка]({webinar_link}) на вебинар"
+            else: 
+                webinar_link = f'Ссылка на вебинар не указана в срм, обратись к [администратору](https://t.me/inginirium_adminn)'
+            message_text = (
+                f"Привет!\nНапоминаю тебе о завтрашнем вебинаре:\n"
+                f"Предмет: {self.subject}\nВремя: {self.time}\n{webinar_link}\n"
+                f"Пожалуйста, подтверди готовность!👇"
+            )
+        
         else:
             # Групповое занятие
-            message_text = config.reminder_message_text.format(
+            message_text = raw_texts.reminder_message_text.format(
                 self.loc_info if self.location == config.transcript['schools'] else self.location,
                 self.classroom, self.subject, self.time, self.duration
             )
@@ -258,27 +322,29 @@ class Lesson():
 
 
 
-    def get_reminder_text(self) -> tuple:
+    def get_reminder_text(self) -> Tuple[str, str]:
         """
-        Текст напоминания о предстоящем занятии для преподавателя.
+        Текст напоминания о предстоящем занятии для куратора.
         """
-        student_names = ', '.join(self.students_list) if self.students_list else "Студент не указан"
+        student_names = ', '.join(self.students_list) if self.students_list else "Ученик не указан"
         
         if self.lesson_type_id == 'group':
             # Групповое занятие
             message_text = (
-                f"Подтвердили участие в занятии по предмету {self.subject}:\n"
+                f"🟡Подтвердили участие в занятии по предмету {self.subject}:\n"
                 f"Преподаватель: {self.teacher_fio}\n"
-                f"Группа: {self.group_name}\n"
+                f"Группа: {self.group_name}\n"#.replace('_', '\\_')
                 f"Место: {self.location}, аудитория {self.classroom}\n"
-                f"Время: {self.time}"
+                f"Время: {self.time}\n"
+                f"Дата: {self.date}"
+
             )
         elif self.lesson_type_id == 'private':
             # Индивидуальное занятие
             message_text = (
                 f"Подтвердили участие в индивидуальном занятии:\n"
                 f"Преподаватель: {self.teacher_fio}\n"
-                f"Студент: {student_names}\n"
+                f"Ученик: {student_names}\n"
                 f"Предмет: {self.subject}\n"
                 f"Место: {self.location}, аудитория {self.classroom}\n"
                 f"Время: {self.time}"
@@ -288,19 +354,9 @@ class Lesson():
             message_text = (
                 f"Подтвердили участие в собеседовании:\n"
                 f"Преподаватель: {self.teacher_fio}\n"
-                f"Студент: {student_names}\n"
+                f"Ученик: {student_names}\n"
                 f"Предмет: {self.subject}\n"
                 f"Время: {self.time}"
-            )
-        elif self.location == 'web':
-            # Вебинар
-            webinar_link = self.data.get('note', 'Ссылка отсутствует')
-            message_text = (
-                f"Привет!\nНапоминаю тебе о завтрашнем вебинаре:\n"
-                f"Предмет: {self.subject}\n"
-                f"Время: {self.time}\n"
-                f"Ссылка на вебинар: {webinar_link}\n"
-                f"Пожалуйста, подтверди готовность!"
             )
         else:
             # Обработка остальных типов занятий, если необходимо
@@ -308,13 +364,13 @@ class Lesson():
                 f"Подтвердили участие в занятии по предмету {self.subject}:\n"
                 f"Преподаватель: {self.teacher_fio}\n"
                 f"Место: {self.location}, аудитория {self.classroom}\n"
-                f"Время: {self.time}"
+                f"Время: {self.time}\n"
             )
         if not do_it_head_notifications:
             return '', message_text 
         return message_text, message_text
  
-    def get_reminder_text_fail(self) -> tuple:
+    def get_reminder_text_fail(self) -> Tuple[str, str]:
         '''
         return fail message text for (head, coordinator)
         '''
@@ -345,18 +401,18 @@ class Lesson():
             return '', message_text 
         return message_text, message_text
     
-    def get_presence_text(self) -> tuple:
+    def get_presence_text(self) -> Tuple[str, str]:
         """
         Преподаватель подтвердил за 5 минут до занятия.
         """
-        student_names = ', '.join(self.students_list) if self.students_list else "Студент не указан"
+        student_names = ', '.join(self.students_list) if self.students_list else "Ученик не указан"
         
         if self.location == config.transcript['schools']:
             if self.lesson_type_id == 'group':
                 message_text = (
                     f"Преподаватель на месте.\n"
                     f"ФИО: {self.teacher_fio}\n"
-                    f"Группа: {self.group_name}\n"
+                    f"Группа: {self.group_name.replace('_', '\\_')}\n"
                     f"Предмет: {self.subject}\n"
                     f"Адрес: {self.loc_info}\n"
                     f"Время: {self.time}"
@@ -365,7 +421,7 @@ class Lesson():
                 message_text = (
                     f"Преподаватель на месте.\n"
                     f"ФИО: {self.teacher_fio}\n"
-                    f"Студент: {student_names}\n"
+                    f"Ученик: {student_names}\n"
                     f"Предмет: {self.subject}\n"
                     f"Адрес: {self.loc_info}\n"
                     f"Время: {self.time}"
@@ -375,18 +431,19 @@ class Lesson():
                 message_text = (
                     f"Преподаватель на месте.\n"
                     f"ФИО: {self.teacher_fio}\n"
-                    f"Группа: {self.group_name}\n"
+                    f"Группа: {self.group_name.replace('_', '\\_')}\n"
                     f"Предмет: {self.subject}\n"
                     f"Место: {self.location}\n"
                     f"Аудитория: {self.classroom}\n"
                     f"Время: {self.time}\n"
                     f"Тема: {self.lesson_theme}"
                 )
+            
             else:
                 message_text = (
                     f"Преподаватель на месте.\n"
                     f"ФИО: {self.teacher_fio}\n"
-                    f"Студент: {student_names}\n"
+                    f"Ученик: {student_names}\n"
                     f"Предмет: {self.subject}\n"
                     f"Место: {self.location}\n"
                     f"Аудитория: {self.classroom}\n"
@@ -399,7 +456,7 @@ class Lesson():
         return message_text, message_text
     
  
-    def get_presence_text_fail(self) -> tuple:
+    def get_presence_text_fail(self) -> Tuple[str, str]:
         '''
         Преподаватель не на месте
         '''
@@ -435,13 +492,14 @@ class Lesson():
                 )
         return message_text, message_text    
 
-    def get_attendance_text(self) -> str: 
+    def get_attendance_text(self) -> Tuple[str, str]: 
         '''
         Преподаватель отмечает учеников
         '''
         if self.theme == 'IT':
             message_text = (
-                f"Наименование группы: {self.group_name}\n"
+                f"🟢Наименование группы: {self.group_name}\n"
+                f"Преподаватель: {self.teacher_fio}\n"
                 f"Время: {self.time}\n"
                 f"Дата: {self.date}\n"
                 f"1. Тема занятия: {self.lesson_theme}\n"
@@ -451,7 +509,9 @@ class Lesson():
 
         else:
             message_text = (
+                f"🟢Наименование группы: {self.group_name}\n"
                 f"Посещаемость: {self.loc_info}\n"
+                f"Преподаватель: {self.teacher_fio}\n"
                 f"Предмет: {self.subject}\n"
                 f"Время: {self.time}\n"
                 f"Дата: {self.date}\n"
@@ -463,13 +523,13 @@ class Lesson():
             return '', message_text 
         return message_text, message_text
 
-    def get_feedback_text(self) -> str:
+    def get_feedback_text(self) -> Tuple[str, str]:
         '''
         Преподаватель отправил обратную связь после занятия
         '''
         if self.theme == 'IT':
             message_text = (
-                f"Группа: {self.group_name}\n"
+                f"🟣Группа: {self.group_name.replace('_', '\\_')}\n"
                 f"Предмет: {self.subject}\n"
                 f"Время: {self.time}\n"
                 f"Обратная связь: {self.feedback}"
@@ -477,7 +537,7 @@ class Lesson():
 
         else:
             message_text = (
-                f"Обратная связь по группе: {self.group_name}\n"
+                f"🟣Обратная связь по группе: {self.group_name}\n"
                 f"Время: {self.time}\n"
                 f"Предмет: {self.subject}\n"
                 f"Обратная связь: {self.feedback}"

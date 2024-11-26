@@ -8,13 +8,14 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram import F, types
 
 
-from db import Teachers_database
+from db import TeachersDatabase
 from crm import CRM
-from config import tg_admins, greeting_message_it, greeting_message_3d
+from config import tg_admins
+from raw_texts import greeting_message_it, greeting_message_3d
 
 
 router = Router()
-db = Teachers_database()
+db = TeachersDatabase()
 
 ALLOWED_IDS = tg_admins
 
@@ -37,12 +38,10 @@ def escape_md(text: str) -> str:
     return ''.join(f"\\{char}" if char in escape_chars else char for char in text)
 
 @router.chat_member()
-async def chat_member_updated(event: ChatMemberUpdated):
+async def chat_member_updated(event: ChatMemberUpdated) -> None:
     if event.old_chat_member.status != event.new_chat_member.status:
-        #print(f"Status changed from {event.old_chat_member.status} to {event.new_chat_member.status}")
         username = escape_md(event.new_chat_member.user.username)
         if event.new_chat_member.status == "member":
-            #print(f"New member detected: {username}")
             await event.bot.send_message(
                 chat_id=event.chat.id,
                 text=greeting_message_3d.format(username),parse_mode='Markdown'
@@ -51,7 +50,7 @@ async def chat_member_updated(event: ChatMemberUpdated):
 
 
 @router.message(Command(commands=["start", "help"]))
-async def start_help_command(message: Message, state: FSMContext):
+async def start_help_command(message: Message, state: FSMContext) -> None:
     if message.chat.type != 'private':  # Проверяем, что чат является личным
         return
     '''
@@ -67,7 +66,7 @@ async def start_help_command(message: Message, state: FSMContext):
         await message.answer("Вот список доступных для всех команд:\n/start - Запуск бота\n/help - Помощь\n/register - Регистрация пользоватлея")
 
 @router.message(Command(commands=["register"]))
-async def command_register(message: Message, state: FSMContext):
+async def command_register(message: Message, state: FSMContext) -> None:
     # Проверка, есть ли уже преподаватель в базе данных
     if db.get_teacher_by_tg_id(message.from_user.id) is None:
         await message.answer("Введите ваше ФИО полностью (например, Иванов Иван Иванович):", reply_markup=inline_keyboard_cancel)
@@ -76,11 +75,9 @@ async def command_register(message: Message, state: FSMContext):
         await message.answer("Вы уже зарегистрированы.")
 
 @router.message(Registration.waiting_for_name)
-async def register_name(message: Message, state: FSMContext):
+async def register_name(message: Message, state: FSMContext) -> None:
     # Сохранение имени пользователя
     crm_id = CRM().teachers_raw.get(message.text, None)
-    #print(crm.teachers_raw)
-    #print(crm.teachers_raw[message.text], message.text)
     if not crm_id:
         await message.answer("Вы не найдены в базе данных CRM, обратитесь к вашему координатору и пройдите регистрацию заново")
         await state.clear()
@@ -95,7 +92,7 @@ async def register_name(message: Message, state: FSMContext):
 
 
 @router.message(Registration.waiting_for_phone)
-async def register_phone(message: Message, state: FSMContext):
+async def register_phone(message: Message, state: FSMContext) -> None:
     phone = message.text
     user_id = message.from_user.id
 
@@ -121,7 +118,7 @@ async def register_phone(message: Message, state: FSMContext):
     await state.clear()
 
 @router.message(Command(commands=["register_admin"]))
-async def command_register_admin(message: Message, state: FSMContext):
+async def command_register_admin(message: Message, state: FSMContext) -> None:
     if message.from_user.id not in ALLOWED_IDS:
         await message.answer("У вас нет прав для выполнения этой команды.")
         return
@@ -130,13 +127,13 @@ async def command_register_admin(message: Message, state: FSMContext):
     await state.set_state(Registration.waiting_for_name_admin)
 
 @router.callback_query(F.data == "cancel_registration")
-async def process_cancel_registration(callback_query: types.CallbackQuery, state: FSMContext):
+async def process_cancel_registration(callback_query: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()  # Сброс всех состояний
     await callback_query.message.edit_reply_markup(reply_markup=None)  # Убираем инлайн-клавиатуру
     await callback_query.message.answer("Процесс регистрации отменен.")
 
 @router.message(Registration.waiting_for_name_admin)
-async def register_name_admin(message: Message, state: FSMContext):
+async def register_name_admin(message: Message, state: FSMContext) -> None:
     crm_id = CRM().teachers_raw.get(message.text, None)
     if not crm_id:
         button1 = InlineKeyboardButton(text='Внести вручную', callback_data=f'crm_admin_input')
@@ -155,7 +152,7 @@ async def register_name_admin(message: Message, state: FSMContext):
 
 # Обработка callback-кнопок "Внести вручную" и "Заново"
 @router.callback_query(F.data.startswith("crm_admin_"))
-async def process_crm_admin_callback(callback_query: types.CallbackQuery, state: FSMContext):
+async def process_crm_admin_callback(callback_query: types.CallbackQuery, state: FSMContext) -> None:
     action = callback_query.data.replace('crm_admin_', '')
     
     if action == 'input':  # Внести вручную
@@ -172,7 +169,7 @@ async def process_crm_admin_callback(callback_query: types.CallbackQuery, state:
 
 # Обработка ручного ввода CRM ID
 @router.message(Registration.waiting_for_crm_id)
-async def register_crm_id(message: Message, state: FSMContext):
+async def register_crm_id(message: Message, state: FSMContext) -> None:
     crm_id = message.text
     if not crm_id.isdigit():
         await message.answer("Пожалуйста, введите корректный CRM ID.")
@@ -184,7 +181,7 @@ async def register_crm_id(message: Message, state: FSMContext):
     await state.set_state(Registration.waiting_for_phone_admin)
 
 @router.message(Registration.waiting_for_phone_admin)
-async def register_phone_admin(message: Message, state: FSMContext):
+async def register_phone_admin(message: Message, state: FSMContext) -> None:
     phone = message.text
     phone = phone.translate(str.maketrans('', '', ' ()-'))
     if not phone.isdigit() or len(phone) != 11:
@@ -196,7 +193,7 @@ async def register_phone_admin(message: Message, state: FSMContext):
     await state.set_state(Registration.waiting_for_tg_id)
 
 @router.message(Registration.waiting_for_tg_id)
-async def register_tg_id_admin(message: Message, state: FSMContext):
+async def register_tg_id_admin(message: Message, state: FSMContext) -> None:
     tg_id = message.text
     if not tg_id.isdigit():
         await message.answer("Пожалуйста, введите корректный Telegram ID.")
@@ -209,7 +206,7 @@ async def register_tg_id_admin(message: Message, state: FSMContext):
     await state.clear()
 
 @router.message(Command(commands=["teachers_db"]))
-async def command_register_admin(message: Message):
+async def command_register_admin(message: Message) -> None:
     if message.from_user.id in ALLOWED_IDS:
         teachers_list = db.fetch_teachers()
         teachers_str_list = [str(teacher)[1:-1] for teacher in teachers_list]
@@ -219,7 +216,7 @@ async def command_register_admin(message: Message):
 
 
 @router.message(Command(commands=["delete_teacher"]))
-async def command_delete_teacher(message: Message, state: FSMContext):
+async def command_delete_teacher(message: Message, state: FSMContext) -> None:
     if message.from_user.id not in ALLOWED_IDS:
         await message.answer("У вас нет прав для выполнения этой команды.")
         return
@@ -229,7 +226,7 @@ async def command_delete_teacher(message: Message, state: FSMContext):
 
 # Обработка CRM ID преподавателя
 @router.message(Deletion.waiting_for_crm_id)
-async def delete_teacher(message: Message, state: FSMContext):
+async def delete_teacher(message: Message, state: FSMContext) -> None:
     crm_id = message.text
 
     if not crm_id.isdigit():
@@ -254,7 +251,7 @@ async def delete_teacher(message: Message, state: FSMContext):
 
 # Обработка нажатия на кнопки "Удалить" и "Отмена"
 @router.callback_query(F.data.startswith("delete_confirm_"))
-async def process_delete_confirm(callback_query: types.CallbackQuery):
+async def process_delete_confirm(callback_query: types.CallbackQuery) -> None:
     crm_id = int(callback_query.data.replace("delete_confirm_", ""))
     
     # Удаление преподавателя
@@ -264,6 +261,6 @@ async def process_delete_confirm(callback_query: types.CallbackQuery):
     await callback_query.message.answer(f"Преподаватель с CRM ID {crm_id} успешно удален.")
 
 @router.callback_query(F.data == "delete_cancel")
-async def process_delete_cancel(callback_query: types.CallbackQuery):
+async def process_delete_cancel(callback_query: types.CallbackQuery) -> None:
     await callback_query.message.edit_reply_markup(reply_markup=None)  # Убираем кнопки
     await callback_query.message.answer("Удаление отменено.")

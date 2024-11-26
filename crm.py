@@ -1,15 +1,14 @@
 import json
 import requests
 import datetime as dt
-from typing import List
+from typing import List, Dict, Optional
 
 from config import CRM_CREDENTIALS, locations_raw
-
 class CRM:
     """
     An interacting with AlphaCRM (Inginirium)
     """
-    def __init__(self, host="inginirium.s20.online"):
+    def __init__(self, host="inginirium.s20.online") -> None:
         self.host = host
         self.token = None
         self.subjects = None
@@ -19,7 +18,7 @@ class CRM:
         self.auth()
         self.update_data()  # Инициализация данных при создании экземпляра класса
 
-    def auth(self):
+    def auth(self) -> None:
 
         response = requests.post(
             f"https://{self.host}/v2api/auth/login",
@@ -29,14 +28,14 @@ class CRM:
         answer = response.json()
         self.token = answer.get("token")  # Сохранение токена для дальнейших запросов
 
-    def update_data(self):
+    def update_data(self) -> None:
         """Обновление данных из CRM."""
         self.subjects = self.get_subject_map()
         self.locations = self.get_locations_name()
         self.teachers = self.get_teacher_info()
         self.teachers_raw = {i['name']:i['id'] for i in self.teachers}
 
-    def get_group_info(self, id: int):
+    def get_group_info(self, id: int) -> Optional[Dict]:
         """
         Getting group info from CRM by its id
 
@@ -61,7 +60,7 @@ class CRM:
             return None
         return None
     
-    def get_subject_map(self):
+    def get_subject_map(self) -> Optional[Dict]:
         response = requests.post(
             f"https://{self.host}/v2api/2/subject/index",
             headers={"X-ALFACRM-TOKEN": self.token}
@@ -78,7 +77,7 @@ class CRM:
                            end_dt: str,
                            status: int = 1,
                            page: int = 0,
-                          ):
+                          ) -> List[Dict]:
         """
         Getting the closest group by time
         Date format: `dd.mm.yyyy`
@@ -106,7 +105,7 @@ class CRM:
             return answer.get("items", [])
         return []
 
-    def get_slots_info_by_date(self, date:str, status:int = 1):
+    def get_slots_info_by_date(self, date:str, status:int = 1) -> Dict[str, List[Dict]]:
         """
         Getting the closest group by time
         Date format: `dd.mm.yyyy`
@@ -176,7 +175,6 @@ class CRM:
 
         for slot in data:
             room_id = slot['room_id']
-            #print(room_id)
             for type in rooms:
                 if room_id in rooms[type]:
                     new_slot = {}
@@ -188,7 +186,7 @@ class CRM:
                     res[type].append(new_slot)
         return res
 
-    def get_teacher_info(self):
+    def get_teacher_info(self) -> List[Dict]:
             """
             Getting list of teachers
 
@@ -206,7 +204,7 @@ class CRM:
                 return answer.get("items", [])
             return []
     
-    def get_student_ids(self, id: int):
+    def get_student_ids(self, id: int) -> List[Dict]:
             """
             Getting indexes of student from specific group
 
@@ -226,7 +224,7 @@ class CRM:
                 return answer.get("items", [])
             return []
     
-    def get_students(self, ids: List[int]):
+    def get_students(self, ids: List[int]) -> List[Dict]:
             """
             Getting information about student by their indexes in CRM
             """
@@ -251,7 +249,7 @@ class CRM:
                 return answer.get("items", [])
             return []
 
-    def get_students_raw_info(self, ids:List[int]):
+    def get_students_raw_info(self, ids:List[int]) -> List[Dict]:
             #student_ids = [st["customer_id"] for st in ids]
             response = requests.post(
                 f"https://{self.host}/v2api/2/customer/index",
@@ -265,7 +263,7 @@ class CRM:
                 return answer.get("items", [])
             return []
 
-    def get_locations_name(self):
+    def get_locations_name(self) -> List[Dict]:
             response = requests.post(
                 f"https://{self.host}/v2api/2/room/index",
                 headers={"X-ALFACRM-TOKEN": self.token},
@@ -276,5 +274,3 @@ class CRM:
                 answer = response.json()
                 return answer.get("items", [])
             return []
-
-crm = CRM()
