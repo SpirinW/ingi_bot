@@ -22,7 +22,6 @@ CRM_CREDENTIALS = {
     "api_key": os.getenv("CRM_API_KEY"),
 }
 
-vlad = '289988172'
 
 class TgIds:
     head_it = int(os.getenv("HEAD_IT", 0))
