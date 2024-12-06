@@ -67,8 +67,7 @@ Ingi Telebot 2.0 — это мощный Telegram-бот, разработанн
 
 ## 📩 **Контакты**
 Если у вас есть вопросы или предложения, свяжитесь с нами:
-- **Email**: support@example.com
-- **Telegram**: [@yourusername](https://t.me/yourusername)
+- **Telegram**: [@yVlad_The_OneX](https://t.me/Vlad_The_OneX)
 
 --- 
 
