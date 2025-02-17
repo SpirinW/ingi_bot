@@ -75,8 +75,8 @@ Ingi Telebot 2.0 — это мощный Telegram-бот, разработанн
 
 ## **Скриншоты** 
 
-[Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/1.png)
-[Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/2.png)
-[Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/3.png)
-[Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/4.png)
-[Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/5.png)
+![Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/1.png)
+![Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/2.png)
+![Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/3.png)
+![Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/4.png)
+![Скриншот](https://github.com/SpirinW/ingi_bot/blob/main/screenshots/5.png)
