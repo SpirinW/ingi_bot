@@ -1,63 +1,61 @@
-import sqlite3
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 from typing import Optional, Tuple, List
 
-class TeachersDatabase:
-    def __init__(self, db_path='database.db') -> None:
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.cursor = self.conn.cursor()
-        self.create_table()
+Base = declarative_base()
 
-    def create_table(self) -> None:
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS teachers(
-                name TEXT,
-                crm_id INTEGER,
-                tg_id INTEGER UNIQUE,
-                phone TEXT
-            )
-        ''') 
-        self.conn.commit()
+class Teacher(Base):
+    __tablename__ = 'teachers'
+    
+    name = Column(String)
+    crm_id = Column(Integer, primary_key=True)
+    tg_id = Column(Integer, unique=True)
+    phone = Column(String)
+
+class TeachersDatabase:
+    def __init__(self, db_path='sqlite:///database.db') -> None:
+        self.engine = create_engine(db_path, echo=True)
+        Base.metadata.create_all(self.engine)  
+        Session = sessionmaker(bind=self.engine)
+        self.session = Session()
 
     def add_teacher(self, name: str, crm_id: int, tg_id: int, phone: str) -> bool:
-        # Проверка на наличие преподавателя по tg_id
         if self.get_teacher_by_tg_id(tg_id) is None:
-            self.cursor.execute('''
-                INSERT INTO teachers (name, crm_id, tg_id, phone) 
-                VALUES (?, ?, ?, ?)
-            ''', (name, crm_id, tg_id, phone))
-            self.conn.commit()
+            new_teacher = Teacher(name=name, crm_id=crm_id, tg_id=tg_id, phone=phone)
+            self.session.add(new_teacher)
+            self.session.commit()
             return True
         else:
             return False
 
     def get_teacher_by_crm_id(self, crm_id: int) -> Optional[Tuple[str, int, int, str]]:
-        self.cursor.execute('''
-            SELECT * FROM teachers WHERE crm_id = ?
-        ''', (crm_id,))
-        return self.cursor.fetchone()
+        teacher = self.session.query(Teacher).filter_by(crm_id=crm_id).first()
+        if teacher:
+            return (teacher.name, teacher.crm_id, teacher.tg_id, teacher.phone)
+        return None
 
     def get_teacher_by_tg_id(self, tg_id: int) -> Optional[Tuple[str, int, int, str]]:
-        self.cursor.execute('''
-            SELECT * FROM teachers WHERE tg_id = ?
-        ''', (tg_id,))
-        return self.cursor.fetchone()
+        teacher = self.session.query(Teacher).filter_by(tg_id=tg_id).first()
+        if teacher:
+            return (teacher.name, teacher.crm_id, teacher.tg_id, teacher.phone)
+        return None
 
     def get_teacher_by_phone(self, phone: str) -> Optional[Tuple[str, int, int, str]]:
-        self.cursor.execute('''
-            SELECT * FROM teachers WHERE phone = ?
-        ''', (phone,))
-        return self.cursor.fetchone()
+        teacher = self.session.query(Teacher).filter_by(phone=phone).first()
+        if teacher:
+            return (teacher.name, teacher.crm_id, teacher.tg_id, teacher.phone)
+        return None
 
     def fetch_teachers(self) -> List[Tuple[str, int, int, str]]:
-        self.cursor.execute('select * from teachers')
-        return self.cursor.fetchall()
+        teachers = self.session.query(Teacher).all()
+        return [(teacher.name, teacher.crm_id, teacher.tg_id, teacher.phone) for teacher in teachers]
 
     def delete_teacher_by_crm_id(self, crm_id: int) -> None:
-        self.cursor.execute('''
-            DELETE FROM teachers WHERE crm_id = ?
-        ''', (crm_id,))
-        self.conn.commit()
-    
-    def close(self) -> None:
-        self.conn.close()
+        teacher = self.session.query(Teacher).filter_by(crm_id=crm_id).first()
+        if teacher:
+            self.session.delete(teacher)
+            self.session.commit()
 
+    def close(self) -> None:
+        self.session.close()
